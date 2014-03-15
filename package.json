@@ -1,0 +1,25 @@
+{
+  "name": "telehash-thtp",
+  "version": "0.0.1",
+  "description": "Adding thtp support to telehash-js",
+  "main": "index.js",
+  "dependencies": {
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quartzjer/telehash-thtp.git"
+  },
+  "keywords": [
+    "telehash"
+  ],
+  "author": {
+    "name": "Jeremie Miller",
+    "email": "jeremie@jabber.org",
+    "url": "http://jeremie.com/"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/quartzjer/telehash-thtp/issues"
+  },
+  "homepage": "https://github.com/quartzjer/telehash-thtp"
+}
