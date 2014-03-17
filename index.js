@@ -35,7 +35,7 @@ exports.install = function(self)
     var res;
     phttp = new Buffer(0);
     console.log("REQUESTING",js)
-    var chan = to.start("thtp",{bare:true,js:js,body:phttp},function(err,packet,cbChan){
+    var chan = to.start("thtp",{bare:true,js:js,body:phttp},function(err,packet,chan,cbChan){
       // handle error differently depending on state
       if(err && err !== true)
       {
@@ -59,7 +59,7 @@ exports.install = function(self)
         }
       }
       if(res) res.push(packet.body);
-      if(packet.js.done) res.end();
+      if(packet.js.done) res.emit("end");
     });
 
     return writer(chan);
@@ -73,7 +73,6 @@ exports.install = function(self)
       // ensure valid request
       if(typeof packet.js.path != "string" || typeof packet.js.method != "string") return chan.err("invalid request");
 
-      cbStart();
       var req;
       var phttp = new Buffer(0);
       chan.callback = function(err, packet, chan, cbChan)
@@ -81,42 +80,44 @@ exports.install = function(self)
         if(err && err !== true)
         {
           // only care if during request reading
-          if(req) req.end();
+          if(req) req.emit("end");
           return;
         }
+        cbChan();
         // if parsing headers yet
         if(!req)
         {
           phttp = Buffer.concat([phttp,packet.body]);
           if(packet.js.done && phttp.length == 0) phttp = new Buffer("0000","hex"); // empty request is ok
-          if((http = self.pdecode(phttp)))
-          {
-            packet.body = http.body;
-            http.js.status = packet.js.status;
-            if(!http.js.path) http.js.path = packet.js.path;
-            req = stream.Readable();
-            req.headers = http.js;
-            req._read = function(){}; // TODO
-            cbListen(req,function(err,args){
-              if(err) return chan.err(err);
-              var http = {body:args.body,js:{}};
-              if(typeof args.headers == "object") Object.keys(args.headers).forEach(function(header){
-                http.js[header.toLowerCase()] = args.headers[header].toString();
-              });
-              if(http.body) http.js["content-length"] = http.body.length.toString();
-              http.js.status = args.status;
-              var phttp = self.pencode(http);
-
-              var js = {status:args.status};
-              if(args.body) js.done = true;
-              chan.send({js:js,body:phttp});
-              return writer(chan);
+          if(!(http = self.pdecode(phttp))) return;
+          // new thtp request
+          packet.body = http.body;
+          http.js.status = packet.js.status;
+          if(!http.js.path) http.js.path = packet.js.path;
+          req = stream.Readable();
+          req.headers = http.js;
+          req._read = function(){}; // TODO
+          cbListen(req,function(err,args){
+            if(err) return chan.err(err);
+            var http = {body:args.body,js:{}};
+            if(typeof args.headers == "object") Object.keys(args.headers).forEach(function(header){
+              http.js[header.toLowerCase()] = args.headers[header].toString();
             });
-          }
+            if(http.body) http.js["content-length"] = http.body.length.toString();
+            http.js.status = args.status;
+            var phttp = self.pencode(http);
+
+            var js = {status:args.status};
+            if(args.body) js.done = true;
+            chan.send({js:js,body:phttp});
+            return writer(chan);
+          });
         }
-        if(res) res.push(packet.body);
-        if(packet.js.done) res.end();
+        req.push(packet.body);
+        console.log("REQ",req);
+        if(packet.js.done) req.emit("end");
       }
+      chan.callback(err,packet,chan,cbStart);
     }
   }
 }
