@@ -1,6 +1,6 @@
 var path = require("path");
 var th = require("telehash");
-th.debug(console.log);
+//th.debug(console.log);
 th.init({id:path.resolve("server.json"),seeds:path.resolve("seeds.json")},function(err,self){
   if(err) return console.log(err);
   require("./index.js").install(self);
