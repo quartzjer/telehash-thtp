@@ -1,5 +1,6 @@
 var stream = require("stream");
 var urllib = require("url");
+var httplib = require("http");
 
 exports.install = function(self)
 {
@@ -26,16 +27,16 @@ exports.install = function(self)
       http.js[header.toLowerCase()] = args.headers[header].toString();
     });
     if(http.body) http.js["content-length"] = http.body.length.toString();
-    var phttp = self.pencode(http.js,http.body);
-
+    var body = self.pencode(http.js,http.body);
     var js = {method:args.method.toLowerCase(),path:uri.pathname};
 
     // single-shot requests
-    if(phttp.length < 1000) js.end = true;
+    if(body.length <= 1000) js.end = true;
 
-    console.log("REQUESTING",js,phttp.length);
-    var pipe = streamer(to.start("thtp",{bare:true,js:js,body:phttp.slice(0,1000)},function(err,packet,chan,cbChan){
-      cbChan();
+    var pin = new Buffer(0);
+    var pipe = streamer(to.start("thtp",{bare:true,js:js,body:body.slice(0,1000)},function(err,packet,chan,cbChan){
+      cbChan(true);
+//      console.log("PACKET",packet.js,packet.body.length)
       if(pipe.headers)
       {
         pipe.push(packet.body);
@@ -44,19 +45,21 @@ exports.install = function(self)
       }
 
       // if parsing headers yet
-      phttp = Buffer.concat([phttp,packet.body]);
-      if(err && phttp.length == 0) phttp = new Buffer("0000","hex"); // empty request is ok
+      if(packet.js.status) pipe.status = packet.js.status;
+      pin = Buffer.concat([pin,packet.body]);
+      if(err && pin.length == 0) pin = new Buffer("0000","hex"); // empty request is ok
       var http;
-      if(!(http = self.pdecode(phttp))) return;
+      if(!(http = self.pdecode(pin))) return;
 
-      if(!http.js.status) http.js.status = packet.js.status;
+      if(!http.js.status) http.js.status = pipe.status;
       pipe.headers = http.js;
       cbRequest(false,pipe);
       if(http.body) pipe.push(http.body);
+      if(err) pipe.emit("end");
     }));
 
     // any remainder
-    if(phttp.length > 1000) pipe.end(phttp.slice(1000));
+    if(body.length > 1000) pipe.end(body.slice(1000));
 
     return pipe;
   }
@@ -65,7 +68,7 @@ exports.install = function(self)
   {
     self.rels["thtp"] = function(err, packet, chan, cbStart)
     {
-      console.log("INCOMING",packet.js,packet.body.length);
+//      console.log("INCOMING",packet.js,packet.body.length);
       // ensure valid request
       if(typeof packet.js.path != "string" || typeof packet.js.method != "string") return chan.err("invalid request");
 
@@ -73,7 +76,7 @@ exports.install = function(self)
       var phttp = new Buffer(0);
       chan.callback = function(err, packet, chan, cbChan)
       {
-        cbChan();
+        cbChan(true);
         // just streaming the body
         if(pipe)
         {
@@ -86,34 +89,53 @@ exports.install = function(self)
         phttp = Buffer.concat([phttp,packet.body]);
         if(err && phttp.length == 0) phttp = new Buffer("0000","hex"); // make a blank default request
         if(!(http = self.pdecode(phttp))) return;
-        console.log("REQ",http,http.js);
+//        console.log("REQ",http,http.js);
         // new thtp request
-        http.js.method = packet.js.method;
+        if(!http.js.method) http.js.method = packet.js.method;
         if(!http.js.path) http.js.path = packet.js.path;
         if(typeof http.js.method != "string" || typeof http.js.path != "string") return; // invalid request
 
         pipe = streamer(chan);
+        pipe.method = http.js.method || packet.js.method;
+        pipe.path = http.js.path || packet.js.path;
+        delete http.js.method;
+        delete http.js.path;
         pipe.headers = http.js;
-        cbListen(pipe,function(err,args){
-          if(err) return chan.err(err);
-          var http = {body:args.body,js:{}};
+        cbListen(pipe,function(args){
+          if(!args) args = {};
+          if(!args.status) args.status = 200;
+          if(args.err) return chan.err(err);
+          var js = {}
           if(typeof args.headers == "object") Object.keys(args.headers).forEach(function(header){
-            http.js[header.toLowerCase()] = args.headers[header].toString();
+            js[header.toLowerCase()] = args.headers[header].toString();
           });
-          if(http.body) http.js["content-length"] = http.body.length.toString();
-          http.js.status = args.status;
-          if(!http.js.status) http.js.status = 200;
-          var phttp = self.pencode(http.js,http.body);
+          if(args.body) js["content-length"] = args.body.length.toString();
+          js.status = args.status;
+          var phttp = self.pencode(js,args.body);
 
           var js = {status:args.status};
-          if(args.body) js.done = true;
-          chan.send({js:js,body:phttp});
+          if(args.body && phttp.length <= 1000) js.end = true;
+          chan.send({js:js,body:phttp.slice(0,1000)});
+          if(phttp.length >1000) pipe.write(phttp.slice(1000));
           return pipe;
         });
         if(http.body) pipe.push(http.body);
+        if(err) pipe.emit("end");
       }
       chan.callback(err,packet,chan,cbStart);
     }
+  }
+  
+  // this is super simplistic, it'll need a lot of edge case fixes
+  self.thtp.proxy = function(args)
+  {
+    if(args.address == "0.0.0.0") args.address = "127.0.0.1";
+    self.thtp.listen(function(req,cbRes){
+      var opt = {host:args.address,port:args.port,headers:req.headers,method:req.method,path:req.path};
+      req.pipe(httplib.request(opt, function(res){
+        res.pipe(cbRes({status:res.statusCode,headers:res.headers}));
+      }));
+    });
   }
 }
 
@@ -154,6 +176,7 @@ function streamer(chan)
   pipe.end = function(data)
   {
     pipe.ended = true;
+    if(!data) data = new Buffer(0);
     pipe.write(data);
   }
   return pipe;
