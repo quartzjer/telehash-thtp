@@ -11,11 +11,7 @@ exports.install = function(self)
     if(typeof args != "object" || !(args.uri || args.url || args.hashname)) return errored("invalid args",cbRequest);
 
     if(args.hashname) args.uri = "thtp://"+args.hashname+args.path;
-    args.uri = args.uri || args.url;
-    // node's uri parser enforces dns max 63 chars per label, grr!
-    var hashname = args.uri.match(/[0-9A-Fa-f]{64}/)[0];
-    var uri = urllib.parse(args.uri.replace(hashname,"dummy"));
-    uri.hostname = hashname;
+    var uri = self.uriparse(args.uri||args.url);
 
     if(uri.protocol != "thtp:") return errored("invalid protocol "+uri.protocol,cbRequest);
     var to;
