@@ -7,6 +7,7 @@ exports.install = function(self)
   self.thtp = {};
   self.thtp.request = function(args, cbRequest)
   {
+    if(!cbRequest) cbRequest = function(){};
     if(typeof args == "string") args = {uri:args}; // convenience
     if(typeof args != "object" || !(args.uri || args.url || args.hashname)) return errored("invalid args",cbRequest);
 
@@ -42,14 +43,14 @@ exports.install = function(self)
 
       // if parsing headers yet
       if(packet.js.status) pipe.status = packet.js.status;
-      pin = Buffer.concat([pin,packet.body]);
+      if(packet.body) pin = Buffer.concat([pin,packet.body]);
       if(err && pin.length == 0) pin = new Buffer("0000","hex"); // empty request is ok
       var http;
       if(!(http = self.pdecode(pin))) return;
 
       if(!http.js.status) http.js.status = pipe.status;
       pipe.headers = http.js;
-      cbRequest(false,pipe);
+      cbRequest(pipe.status >= 300?pipe.status.toString():false,pipe); // flag error for status too
       if(http.body) pipe.push(http.body);
       if(err) pipe.emit("end");
     }));
@@ -105,6 +106,7 @@ exports.install = function(self)
           if(typeof args.headers == "object") Object.keys(args.headers).forEach(function(header){
             js[header.toLowerCase()] = args.headers[header].toString();
           });
+          if(args.json) args.body = JSON.stringify(args.json);
           if(args.body) js["content-length"] = args.body.length.toString();
           js.status = args.status;
           var phttp = self.pencode(js,args.body);
@@ -120,6 +122,23 @@ exports.install = function(self)
       }
       chan.callback(err,packet,chan,cbStart);
     }
+  }
+  
+  var mPaths = {};
+  self.thtp.match = function(path, cbMatch)
+  {
+    mPaths[path] = cbMatch;
+    if(Object.keys(mPaths).length > 1) return;
+    self.thtp.listen(function(req,cbRes){
+      var match;
+      Object.keys(mPaths).forEach(function(path){
+        if(req.path.indexOf(path) != 0) return;
+        if(match && match.length > path) return; // prefer longest match
+        match = path;
+      })
+      if(match) return mPaths[match](req,cbRes);
+      cbRes({status:404,body:"not found"});
+    });
   }
   
   // this is super simplistic, it'll need a lot of edge case fixes
