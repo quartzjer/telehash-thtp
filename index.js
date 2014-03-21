@@ -15,6 +15,7 @@ exports.install = function(self)
     var uri = self.uriparse(args.uri||args.url);
 
     if(uri.protocol != "thtp:") return errored("invalid protocol "+uri.protocol,cbRequest);
+    if(uri.hostname == self.hashname) return errored("can't request self",cbRequest);
     var to;
     if(!(to = self.whois(uri.hostname))) return errored("invalid hashname",cbRequest);
     if(typeof args.method != "string") args.method = "get";
