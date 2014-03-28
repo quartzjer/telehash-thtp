@@ -18,20 +18,23 @@ exports.install = function(self)
     if(uri.hostname == self.hashname) return errored("can't request self",cbRequest);
     var to;
     if(!(to = self.whois(uri.hostname))) return errored("invalid hashname",cbRequest);
-    if(typeof args.method != "string") args.method = "get";
 
-    var http = {body:args.body,js:{}};
+    var js = {};
     if(typeof args.headers == "object") Object.keys(args.headers).forEach(function(header){
-      http.js[header.toLowerCase()] = args.headers[header].toString();
+      js[header.toLowerCase()] = args.headers[header].toString();
     });
-    if(http.body) http.js["content-length"] = http.body.length.toString();
-    var body = self.pencode(http.js,http.body);
-    var js = {method:args.method.toLowerCase(),path:uri.pathname};
+    if(args.body) js["content-length"] = args.body.length.toString();
+    js.method = args.method || "get";
+    js.path = uri.path;
+
+    var body = self.pencode(js,args.body);
+    js = {};
 
     // single-shot requests
     if(body.length <= 1000) js.end = true;
 
     var pin = new Buffer(0);
+//    console.log("REQ",js,body);
     var pipe = streamer(to.start("thtp",{bare:true,js:js,body:body.slice(0,1000)},function(err,packet,chan,cbChan){
       cbChan(true);
 //      console.log("PACKET",packet.js,packet.body.length)
@@ -42,14 +45,16 @@ exports.install = function(self)
         return;
       }
 
-      // if parsing headers yet
-      if(packet.js.status) pipe.status = packet.js.status;
       if(packet.body) pin = Buffer.concat([pin,packet.body]);
-      if(err && pin.length == 0) pin = new Buffer("0000","hex"); // empty request is ok
       var http;
-      if(!(http = self.pdecode(pin))) return;
+      if(!(http = self.pdecode(pin)))
+      {
+        // no packet (yet)
+        if(err) cbRequest(500,pipe);
+        return;
+      }
 
-      if(!http.js.status) http.js.status = pipe.status;
+      pipe.status = parseInt(http.js.status) || 500;
       pipe.headers = http.js;
       cbRequest(pipe.status >= 300?pipe.status.toString():false,pipe); // flag error for status too
       if(http.body) pipe.push(http.body);
@@ -66,12 +71,9 @@ exports.install = function(self)
   {
     self.rels["thtp"] = function(err, packet, chan, cbStart)
     {
-//      console.log("INCOMING",packet.js,packet.body.length);
-      // ensure valid request
-      if(typeof packet.js.path != "string" || typeof packet.js.method != "string") return chan.err("invalid request");
 
       var pipe;
-      var phttp = new Buffer(0);
+      var pin = new Buffer(0);
       chan.callback = function(err, packet, chan, cbChan)
       {
         cbChan(true);
@@ -83,36 +85,38 @@ exports.install = function(self)
           return;          
         }
         
-        // if parsing headers yet
-        phttp = Buffer.concat([phttp,packet.body]);
-        if(err && phttp.length == 0) phttp = new Buffer("0000","hex"); // make a blank default request
-        if(!(http = self.pdecode(phttp))) return;
+        // if parsing the request yet
+        pin = Buffer.concat([pin,packet.body]);
+        if(!(http = self.pdecode(pin)))
+        {
+          if(err) chan.end();
+          return;
+        }
+
 //        console.log("REQ",http,http.js);
         // new thtp request
-        if(!http.js.method) http.js.method = packet.js.method;
-        if(!http.js.path) http.js.path = packet.js.path;
-        if(typeof http.js.method != "string" || typeof http.js.path != "string") return; // invalid request
+        if(typeof http.js.method != "string" || typeof http.js.path != "string") return chan.err("invalid");
 
         pipe = streamer(chan);
-        pipe.method = http.js.method || packet.js.method;
-        pipe.path = http.js.path || packet.js.path;
+        pipe.method = http.js.method;
+        pipe.path = http.js.path;
         delete http.js.method;
         delete http.js.path;
         pipe.headers = http.js;
         cbListen(pipe,function(args){
           if(!args) args = {};
-          if(!args.status) args.status = 200;
-          if(args.err) return chan.err(err);
+          if(args.err) return errored(err,chan.err);
+
           var js = {}
           if(typeof args.headers == "object") Object.keys(args.headers).forEach(function(header){
             js[header.toLowerCase()] = args.headers[header].toString();
           });
+          js.status = args.status || 200;
           if(args.json) args.body = JSON.stringify(args.json);
           if(args.body) js["content-length"] = args.body.length.toString();
-          js.status = args.status;
           var phttp = self.pencode(js,args.body);
 
-          var js = {status:args.status};
+          var js = {};
           if(args.body && phttp.length <= 1000) js.end = true;
           chan.send({js:js,body:phttp.slice(0,1000)});
           if(phttp.length >1000) pipe.write(phttp.slice(1000));

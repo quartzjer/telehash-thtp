@@ -6,5 +6,5 @@ th.init({id:path.resolve("client.json"),seeds:path.resolve("seeds.json")},functi
   require("./index.js").install(self);
   self.thtp.request(process.argv[2],function(err,res){
     console.log("got response",err,res&&res.status);
-  }).pipe(process.stdout);
+  }).on("end",process.exit).pipe(process.stdout);
 })
