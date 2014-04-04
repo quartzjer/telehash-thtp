@@ -130,8 +130,9 @@ exports.install = function(self)
   }
   
   var mPaths = {};
-  self.thtp.match = function(path, cbMatch)
+  self.thtp.match = function(uri, cbMatch)
   {
+    var path = self.uriparse(uri).pathname;
     mPaths[path] = cbMatch;
     if(Object.keys(mPaths).length > 1) return;
     self.thtp.listen(function(req,cbRes){
@@ -141,6 +142,7 @@ exports.install = function(self)
         if(match && match.length > path) return; // prefer longest match
         match = path;
       })
+//      console.log("CHECKING",req.path,match);
       if(match) return mPaths[match](req,cbRes);
       cbRes({status:404,body:"not found"});
     });
